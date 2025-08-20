@@ -5,8 +5,9 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Message
 from aiogram.fsm.storage.memory import MemoryStorage
 
+# --- Налаштування ---
 TOKEN = "8274894041:AAGEJSRDxWHbEriVnneByDtZtK_qu-vmflU"
-GROUP_ID = -1003083789411  # заміни на свій канал/групу
+GROUP_ID = -1003083789411  # твій груп ID
 DAILY_BUDGET = 1000
 
 bot = Bot(token=TOKEN)
@@ -60,4 +61,52 @@ async def handle_message(message: Message):
     expenses, savings = await get_day_data(day)
 
     expenses += amount
-    await update_day(d_
+    await update_day(day, expenses, savings)
+
+    await message.reply(f"✅ Додано {amount} грн\nЗагальні витрати сьогодні: {expenses} грн")
+
+# --- Автозвіт о 23:00 ---
+async def daily_summary():
+    await init_db()
+    while True:
+        now = datetime.now()
+        target = datetime.combine(now.date(), datetime.min.time()) + timedelta(hours=23)
+        if now > target:
+            target += timedelta(days=1)
+        wait_seconds = (target - now).total_seconds()
+        await asyncio.sleep(wait_seconds)
+
+        day = (datetime.now() - timedelta(seconds=1)).strftime("%Y-%m-%d")
+        expenses, savings = await get_day_data(day)
+        balance = DAILY_BUDGET - expenses
+        if balance > 0:
+            savings += balance
+        await update_day(day, 0, savings)
+
+        text = (f"📊 Підсумок дня ({day}):\n"
+                f"🔴 Витрачено: {expenses} грн\n"
+                f"📉 Залишок на сьогодні: {balance if balance>0 else 0} грн\n"
+                f"💰 Загальні заощадження: {savings} грн")
+        try:
+            await bot.send_message(GROUP_ID, text)
+        except Exception as e:
+            print(f"Помилка при відправці повідомлення: {e}")
+
+# --- Головна функція ---
+async def main():
+    await init_db()
+    asyncio.create_task(daily_summary())
+
+    # нескінченний цикл для перезапуску polling у разі помилок
+    while True:
+        try:
+            await dp.start_polling(bot)
+        except Exception as e:
+            print(f"Помилка polling: {e}")
+            await asyncio.sleep(5)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("Зупинка контейнера...")
