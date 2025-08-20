@@ -39,6 +39,14 @@ async def get_day_data(day: str):
                 await db.commit()
                 return 0, 0
 
+# --- Порахувати всі витрати за місяць ---
+async def get_month_expenses(year: int, month: int):
+    month_str = f"{year}-{month:02d}-%"
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT SUM(expenses) FROM budget WHERE day LIKE ?", (month_str,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row[0] else 0
+
 # --- Оновити дані дня ---
 async def update_day(day: str, expenses: int, savings: int):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -58,12 +66,30 @@ async def handle_message(message: Message):
         return
 
     day = datetime.now().strftime("%Y-%m-%d")
-    expenses, savings = await get_day_data(day)
+    month_name = datetime.now().strftime("%B")
+    year = datetime.now().year
+    month = datetime.now().month
 
+    expenses, savings = await get_day_data(day)
     expenses += amount
     await update_day(day, expenses, savings)
 
-    await message.reply(f"✅ Додано {amount} грн\nЗагальні витрати сьогодні: {expenses} грн")
+    balance = DAILY_BUDGET - expenses
+    if balance < 0:
+        balance = 0
+
+    month_expenses = await get_month_expenses(year, month)
+
+    text = (
+        f"🔴 <b>Додано витрати: {amount} грн</b>\n\n"
+        f"📅 Дата: {day}\n"
+        f"🔴 Витрачено сьогодні: {expenses} грн\n"
+        f"📉 Залишок на сьогодні: {balance} грн\n"
+        f"💰 Загальні заощадження на {month_name}: {savings} грн\n"
+        f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
+    )
+
+    await message.reply(text, parse_mode="HTML")
 
 # --- Автозвіт о 23:00 ---
 async def daily_summary():
@@ -77,18 +103,27 @@ async def daily_summary():
         await asyncio.sleep(wait_seconds)
 
         day = (datetime.now() - timedelta(seconds=1)).strftime("%Y-%m-%d")
+        month_name = datetime.now().strftime("%B")
+        year = datetime.now().year
+        month = datetime.now().month
+
         expenses, savings = await get_day_data(day)
         balance = DAILY_BUDGET - expenses
         if balance > 0:
             savings += balance
         await update_day(day, 0, savings)
 
-        text = (f"📊 Підсумок дня ({day}):\n"
-                f"🔴 Витрачено: {expenses} грн\n"
-                f"📉 Залишок на сьогодні: {balance if balance>0 else 0} грн\n"
-                f"💰 Загальні заощадження: {savings} грн")
+        month_expenses = await get_month_expenses(year, month)
+
+        text = (
+            f"📊 <b>Підсумок дня ({day})</b>\n"
+            f"🔴 Витрачено: {expenses} грн\n"
+            f"📉 Залишок на сьогодні: {balance if balance>0 else 0} грн\n"
+            f"💰 Загальні заощадження на {month_name}: {savings} грн\n"
+            f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
+        )
         try:
-            await bot.send_message(GROUP_ID, text)
+            await bot.send_message(GROUP_ID, text, parse_mode="HTML")
         except Exception as e:
             print(f"Помилка при відправці повідомлення: {e}")
 
@@ -97,7 +132,6 @@ async def main():
     await init_db()
     asyncio.create_task(daily_summary())
 
-    # нескінченний цикл для перезапуску polling у разі помилок
     while True:
         try:
             await dp.start_polling(bot)
