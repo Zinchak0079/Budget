@@ -15,6 +15,9 @@ dp = Dispatcher(storage=MemoryStorage())
 
 DB_PATH = "budget.db"
 
+# --- Глобальна змінна для останньої витрати ---
+last_amount = 0
+
 # --- Ініціалізація БД ---
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -57,9 +60,51 @@ async def update_day(day: str, expenses: int, savings: int):
 # --- Хендлер повідомлень у групі ---
 @dp.message()
 async def handle_message(message: Message):
+    global last_amount
+
     if message.chat.id != GROUP_ID:
         return
-    
+
+    # --- Відкат останньої витрати ---
+    if message.text.strip() == "/ч":
+        if last_amount == 0:
+            await message.reply("Немає останньої витрати для скасування.")
+            return
+
+        day = datetime.now().strftime("%Y-%m-%d")
+        month_name = datetime.now().strftime("%B")
+        year = datetime.now().year
+        month = datetime.now().month
+
+        expenses, savings = await get_day_data(day)
+        expenses -= last_amount
+        if expenses < 0:
+            expenses = 0
+
+        balance = DAILY_BUDGET - expenses
+        if balance < 0:
+            balance = 0
+
+        month_expenses = await get_month_expenses(year, month)
+        month_expenses -= last_amount
+        if month_expenses < 0:
+            month_expenses = 0
+
+        await update_day(day, expenses, savings)
+
+        last_amount = 0  # скидаємо останню суму
+
+        text = (
+            f"❌ Відкликано останню витрату\n\n"
+            f"🔴 Витрачено сьогодні: {expenses} грн\n"
+            f"📉 Залишок на сьогодні: {balance} грн\n"
+            f"💰 Загальні заощадження на {month_name}: {savings} грн\n"
+            f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
+        )
+        await message.reply(text)
+        return
+
+    # --- Додавання витрати ---
     try:
         amount = int(message.text.strip())
     except (ValueError, AttributeError):
@@ -79,20 +124,22 @@ async def handle_message(message: Message):
         balance = 0
 
     month_expenses = await get_month_expenses(year, month)
+    month_expenses += amount
+
+    last_amount = amount  # запам’ятовуємо останню додану суму
 
     text = (
         f"🔴 <b>Додано витрати: {amount} грн</b>\n\n"
-        f"📅 Дата: {day}\n"
         f"🔴 Витрачено сьогодні: {expenses} грн\n"
         f"📉 Залишок на сьогодні: {balance} грн\n"
         f"💰 Загальні заощадження на {month_name}: {savings} грн\n"
         f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
     )
-
     await message.reply(text, parse_mode="HTML")
 
 # --- Автозвіт о 23:00 ---
 async def daily_summary():
+    global last_amount
     await init_db()
     while True:
         now = datetime.now()
@@ -126,6 +173,8 @@ async def daily_summary():
             await bot.send_message(GROUP_ID, text, parse_mode="HTML")
         except Exception as e:
             print(f"Помилка при відправці повідомлення: {e}")
+
+        last_amount = 0  # <--- скидаємо останню витрату після щоденного підсумку
 
 # --- Головна функція ---
 async def main():
