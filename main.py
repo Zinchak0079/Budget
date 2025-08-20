@@ -3,13 +3,14 @@ import aiosqlite
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message
+from aiogram.fsm.storage.memory import MemoryStorage
 
 TOKEN = "8274894041:AAGEJSRDxWHbEriVnneByDtZtK_qu-vmflU"
 CHANNEL_ID = -1003083789411  # заміни на свій канал
 DAILY_BUDGET = 1000
 
 bot = Bot(token=TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())
 
 DB_PATH = "budget.db"
 
@@ -44,19 +45,26 @@ async def update_day(day: str, expenses: int, savings: int):
                          (day, expenses, savings))
         await db.commit()
 
-# --- Хендлер повідомлень у каналі ---
-@dp.channel_post()
-async def handle_channel_post(message: Message):
+# --- Хендлер повідомлень у групі ---
+@dp.message()
+async def handle_message(message: Message):
+    # реагує тільки у твоїй групі
+    if message.chat.id != GROUP_ID:
+        return
+    
+    # пробуємо витягнути цифру
+    try:
+        amount = int(message.text.strip())
+    except (ValueError, AttributeError):
+        return  # якщо не число, ігноруємо
+
     day = datetime.now().strftime("%Y-%m-%d")
     expenses, savings = await get_day_data(day)
 
-    try:
-        amount = int(message.text)  # припускаємо, що у каналі пишуть тільки цифри (витрати)
-    except ValueError:
-        return  # якщо не число, ігноруємо
-
     expenses += amount
     await update_day(day, expenses, savings)
+
+    await message.reply(f"✅ Додано {amount} грн\nЗагальні витрати сьогодні: {expenses} грн")
 
 # --- Автозвіт о 23:00 ---
 async def daily_summary():
@@ -82,7 +90,7 @@ async def daily_summary():
                 f"📉 Залишок на сьогодні: {balance if balance>0 else 0} грн\n"
                 f"💰 Загальні заощадження: {savings} грн")
 
-        await bot.send_message(CHANNEL_ID, text)
+        await bot.send_message(GROUP_ID, text)
 
 # --- Головна функція ---
 async def main():
@@ -92,4 +100,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
