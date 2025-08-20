@@ -1,1 +1,3 @@
+aiohttp --only-binary=:all:
+
 aiohttp>=3.10.0
