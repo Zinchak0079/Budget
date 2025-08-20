@@ -6,7 +6,7 @@ from aiogram.types import Message
 from aiogram.fsm.storage.memory import MemoryStorage
 
 TOKEN = "8274894041:AAGEJSRDxWHbEriVnneByDtZtK_qu-vmflU"
-CHANNEL_ID = -1003083789411  # заміни на свій канал
+GROUP_ID = -1003083789411  # заміни на свій канал/групу
 DAILY_BUDGET = 1000
 
 bot = Bot(token=TOKEN)
@@ -48,57 +48,16 @@ async def update_day(day: str, expenses: int, savings: int):
 # --- Хендлер повідомлень у групі ---
 @dp.message()
 async def handle_message(message: Message):
-    # реагує тільки у твоїй групі
     if message.chat.id != GROUP_ID:
         return
     
-    # пробуємо витягнути цифру
     try:
         amount = int(message.text.strip())
     except (ValueError, AttributeError):
-        return  # якщо не число, ігноруємо
+        return
 
     day = datetime.now().strftime("%Y-%m-%d")
     expenses, savings = await get_day_data(day)
 
     expenses += amount
-    await update_day(day, expenses, savings)
-
-    await message.reply(f"✅ Додано {amount} грн\nЗагальні витрати сьогодні: {expenses} грн")
-
-# --- Автозвіт о 23:00 ---
-async def daily_summary():
-    await init_db()
-    while True:
-        now = datetime.now()
-        # розрахунок часу до 23:00
-        target = datetime.combine(now.date(), datetime.min.time()) + timedelta(hours=23)
-        if now > target:
-            target += timedelta(days=1)
-        wait_seconds = (target - now).total_seconds()
-        await asyncio.sleep(wait_seconds)
-
-        day = (datetime.now() - timedelta(seconds=1)).strftime("%Y-%m-%d")
-        expenses, savings = await get_day_data(day)
-        balance = DAILY_BUDGET - expenses
-        if balance > 0:
-            savings += balance
-        await update_day(day, 0, savings)  # новий день, витрати обнуляються
-
-        text = (f"📊 Підсумок дня ({day}):\n"
-                f"🔴 Витрачено: {expenses} грн\n"
-                f"📉 Залишок на сьогодні: {balance if balance>0 else 0} грн\n"
-                f"💰 Загальні заощадження: {savings} грн")
-
-        await bot.send_message(GROUP_ID, text)
-
-# --- Головна функція ---
-async def main():
-    await init_db()
-    asyncio.create_task(daily_summary())
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
-
-
+    await update_day(d_
