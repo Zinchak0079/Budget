@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Message
 
 TOKEN = "8274894041:AAGEJSRDxWHbEriVnneByDtZtK_qu-vmflU"
-CHANNEL_ID = -1001234567890  # заміни на свій канал
+CHANNEL_ID = -1002919994436  # заміни на свій канал
 DAILY_BUDGET = 1000
 
 bot = Bot(token=TOKEN)
