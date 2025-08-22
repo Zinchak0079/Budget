@@ -9,6 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 TOKEN = "8274894041:AAGEJSRDxWHbEriVnneByDtZtK_qu-vmflU"
 GROUP_ID = -1003083789411  # твій груп ID
 DAILY_BUDGET = 1000
+TIMEZONE_OFFSET = 2  # твій пояс UTC+2
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -65,18 +66,54 @@ async def handle_message(message: Message):
     if message.chat.id != GROUP_ID:
         return
 
-    # --- Відкат останньої витрати ---
-    if message.text.strip() == "/ч":
+    text_msg = message.text.strip()
+
+    # --- /інфо ---
+    if text_msg == "/інфо":
+        help_text = (
+            "📌 <b>Команди:</b>\n\n"
+            "🔄 /ч – скасувати <u>останню витрату</u> і повернути попередні значення.\n"
+            "🧹 /д – видалити <u>усі витрати за сьогодні</u>, повернути стан після 23:00 учора.\n"
+            "ℹ️ /інфо – показати пояснення команд."
+        )
+        await message.reply(help_text, parse_mode="HTML")
+        return
+
+    # --- /д: скидання витрат дня ---
+    if text_msg == "/д":
+        today = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+        yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+        today_str = today.strftime("%Y-%m-%d")
+        month_name = today.strftime("%B")
+        year, month = today.year, today.month
+
+        _, yesterday_savings = await get_day_data(yesterday)
+        await update_day(today_str, 0, yesterday_savings)
+
+        month_expenses = await get_month_expenses(year, month)
+
+        text = (
+            f"🧹 Всі витрати за сьогодні скасовано\n\n"
+            f"🔴 Витрачено сьогодні: 0 грн\n"
+            f"📉 Залишок на сьогодні: {DAILY_BUDGET} грн\n"
+            f"💰 Загальні заощадження на {month_name}: {yesterday_savings} грн\n"
+            f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
+        )
+        await message.reply(text)
+        return
+
+    # --- /ч: відкат останньої витрати ---
+    if text_msg == "/ч":
         if last_amount == 0:
             await message.reply("Немає останньої витрати для скасування.")
             return
 
-        day = datetime.now().strftime("%Y-%m-%d")
-        month_name = datetime.now().strftime("%B")
-        year = datetime.now().year
-        month = datetime.now().month
+        today = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+        today_str = today.strftime("%Y-%m-%d")
+        month_name = today.strftime("%B")
+        year, month = today.year, today.month
 
-        expenses, savings = await get_day_data(day)
+        expenses, savings = await get_day_data(today_str)
         expenses -= last_amount
         if expenses < 0:
             expenses = 0
@@ -85,48 +122,41 @@ async def handle_message(message: Message):
         if balance < 0:
             balance = 0
 
+        await update_day(today_str, expenses, savings)
         month_expenses = await get_month_expenses(year, month)
-        month_expenses -= last_amount
-        if month_expenses < 0:
-            month_expenses = 0
-
-        await update_day(day, expenses, savings)
-
-        last_amount = 0  # скидаємо останню суму
 
         text = (
-            f"❌ Відкликано останню витрату\n\n"
+            f"❌ Остання витрата ({last_amount} грн) скасована\n\n"
             f"🔴 Витрачено сьогодні: {expenses} грн\n"
             f"📉 Залишок на сьогодні: {balance} грн\n"
             f"💰 Загальні заощадження на {month_name}: {savings} грн\n"
             f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
         )
+        last_amount = 0
         await message.reply(text)
         return
 
     # --- Додавання витрати ---
     try:
-        amount = int(message.text.strip())
+        amount = int(text_msg)
     except (ValueError, AttributeError):
         return
 
-    day = datetime.now().strftime("%Y-%m-%d")
-    month_name = datetime.now().strftime("%B")
-    year = datetime.now().year
-    month = datetime.now().month
+    today = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+    today_str = today.strftime("%Y-%m-%d")
+    month_name = today.strftime("%B")
+    year, month = today.year, today.month
 
-    expenses, savings = await get_day_data(day)
+    expenses, savings = await get_day_data(today_str)
     expenses += amount
-    await update_day(day, expenses, savings)
+    await update_day(today_str, expenses, savings)
 
     balance = DAILY_BUDGET - expenses
     if balance < 0:
         balance = 0
 
+    last_amount = amount
     month_expenses = await get_month_expenses(year, month)
-    month_expenses += amount
-
-    last_amount = amount  # запам’ятовуємо останню додану суму
 
     text = (
         f"🔴 <b>Додано витрати: {amount} грн</b>\n\n"
@@ -142,17 +172,17 @@ async def daily_summary():
     global last_amount
     await init_db()
     while True:
-        now = datetime.now()
+        now = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
         target = datetime.combine(now.date(), datetime.min.time()) + timedelta(hours=23)
         if now > target:
             target += timedelta(days=1)
         wait_seconds = (target - now).total_seconds()
         await asyncio.sleep(wait_seconds)
 
-        day = (datetime.now() - timedelta(seconds=1)).strftime("%Y-%m-%d")
-        month_name = datetime.now().strftime("%B")
-        year = datetime.now().year
-        month = datetime.now().month
+        today = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+        day = (today - timedelta(seconds=1)).strftime("%Y-%m-%d")
+        month_name = today.strftime("%B")
+        year, month = today.year, today.month
 
         expenses, savings = await get_day_data(day)
         balance = DAILY_BUDGET - expenses
@@ -174,7 +204,7 @@ async def daily_summary():
         except Exception as e:
             print(f"Помилка при відправці повідомлення: {e}")
 
-        last_amount = 0  # <--- скидаємо останню витрату після щоденного підсумку
+        last_amount = 0  # очищаємо після підсумку
 
 # --- Головна функція ---
 async def main():
