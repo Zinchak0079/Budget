@@ -1,5 +1,6 @@
 import asyncio
 import aiosqlite
+import re
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message
@@ -18,6 +19,7 @@ DB_PATH = "budget.db"
 
 # --- Глобальна змінна для останньої витрати ---
 last_amount = 0
+last_comment = ""
 
 # --- Ініціалізація БД ---
 async def init_db():
@@ -61,7 +63,7 @@ async def update_day(day: str, expenses: int, savings: int):
 # --- Хендлер повідомлень у групі ---
 @dp.message()
 async def handle_message(message: Message):
-    global last_amount
+    global last_amount, last_comment
 
     if message.chat.id != GROUP_ID:
         return
@@ -74,9 +76,44 @@ async def handle_message(message: Message):
             "📌 <b>Команди:</b>\n\n"
             "🔄 /ч – скасувати <u>останню витрату</u> і повернути попередні значення.\n"
             "🧹 /д – видалити <u>усі витрати за сьогодні</u>, повернути стан після 23:00 учора.\n"
+            "📊 /звіт – показати актуальний стан (з урахуванням перенесених витрат).\n"
             "ℹ️ /інфо – показати пояснення команд."
         )
         await message.reply(help_text, parse_mode="HTML")
+        return
+
+    # --- /звіт ---
+    if text_msg == "/звіт":
+        today = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+        today_str = today.strftime("%Y-%m-%d")
+        yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+        month_name = today.strftime("%B")
+        year, month = today.year, today.month
+
+        expenses, savings = await get_day_data(today_str)
+        yesterday_expenses, _ = await get_day_data(yesterday)
+
+        transferred = 0
+        if yesterday_expenses > DAILY_BUDGET:
+            transferred = yesterday_expenses - DAILY_BUDGET
+
+        balance = DAILY_BUDGET - expenses
+        if balance < 0:
+            balance = 0
+
+        month_expenses = await get_month_expenses(year, month)
+
+        text = (
+            f"📊 <b>Звіт за {today_str}</b>\n\n"
+            f"🔴 Витрачено сьогодні: {expenses} грн\n"
+            f"📉 Залишок на сьогодні: {balance} грн\n"
+            f"💰 Загальні заощадження на {month_name}: {savings} грн\n"
+            f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
+        )
+        if transferred > 0:
+            text += f"\n\n⚠️ Борг з учора: {transferred} грн"
+
+        await message.reply(text, parse_mode="HTML")
         return
 
     # --- /д: скидання витрат дня ---
@@ -133,13 +170,20 @@ async def handle_message(message: Message):
             f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
         )
         last_amount = 0
+        last_comment = ""
         await message.reply(text)
         return
 
     # --- Додавання витрати ---
     try:
-        amount = int(text_msg)
-    except (ValueError, AttributeError):
+        match = re.match(r"^([\d\.,]+)(?:\s*(.*))?$", text_msg)
+        if not match:
+            return
+
+        raw_amount = match.group(1).replace(",", ".")
+        amount = int(float(raw_amount))
+        comment = match.group(2) if match.group(2) else ""
+    except Exception:
         return
 
     today = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
@@ -156,15 +200,22 @@ async def handle_message(message: Message):
         balance = 0
 
     last_amount = amount
+    last_comment = comment
     month_expenses = await get_month_expenses(year, month)
 
     text = (
-        f"🔴 <b>Додано витрати: {amount} грн</b>\n\n"
-        f"🔴 Витрачено сьогодні: {expenses} грн\n"
+        f"🔴 <b>Додано витрати: {amount} грн</b>"
+    )
+    if comment:
+        text += f"  <i>({comment})</i>"
+
+    text += (
+        f"\n\n🔴 Витрачено сьогодні: {expenses} грн\n"
         f"📉 Залишок на сьогодні: {balance} грн\n"
         f"💰 Загальні заощадження на {month_name}: {savings} грн\n"
         f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
     )
+
     await message.reply(text, parse_mode="HTML")
 
 # --- Автозвіт о 23:00 ---
@@ -181,21 +232,26 @@ async def daily_summary():
 
         today = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
         day = (today - timedelta(seconds=1)).strftime("%Y-%m-%d")
+        next_day = today.strftime("%Y-%m-%d")
         month_name = today.strftime("%B")
         year, month = today.year, today.month
 
         expenses, savings = await get_day_data(day)
-        balance = DAILY_BUDGET - expenses
-        if balance > 0:
+
+        if expenses <= DAILY_BUDGET:
+            balance = DAILY_BUDGET - expenses
             savings += balance
-        await update_day(day, 0, savings)
+            await update_day(next_day, 0, savings)
+        else:
+            overspend = expenses - DAILY_BUDGET
+            await update_day(next_day, overspend, savings)
 
         month_expenses = await get_month_expenses(year, month)
 
         text = (
             f"📊 <b>Підсумок дня ({day})</b>\n"
             f"🔴 Витрачено: {expenses} грн\n"
-            f"📉 Залишок на сьогодні: {balance if balance>0 else 0} грн\n"
+            f"📉 Залишок на сьогодні: {max(0, DAILY_BUDGET - expenses)} грн\n"
             f"💰 Загальні заощадження на {month_name}: {savings} грн\n"
             f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
         )
@@ -204,7 +260,8 @@ async def daily_summary():
         except Exception as e:
             print(f"Помилка при відправці повідомлення: {e}")
 
-        last_amount = 0  # очищаємо після підсумку
+        last_amount = 0
+        last_comment = ""
 
 # --- Головна функція ---
 async def main():
