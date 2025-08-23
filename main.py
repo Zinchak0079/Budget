@@ -1,7 +1,7 @@
 import asyncio
 import aiosqlite
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -84,7 +84,7 @@ async def handle_message(message: Message):
 
     # --- /звіт ---
     if text_msg == "/звіт":
-        today = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+        today = datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
         today_str = today.strftime("%Y-%m-%d")
         yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
         month_name = today.strftime("%B")
@@ -118,7 +118,7 @@ async def handle_message(message: Message):
 
     # --- /д: скидання витрат дня ---
     if text_msg == "/д":
-        today = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+        today = datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
         yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
         today_str = today.strftime("%Y-%m-%d")
         month_name = today.strftime("%B")
@@ -145,7 +145,7 @@ async def handle_message(message: Message):
             await message.reply("Немає останньої витрати для скасування.")
             return
 
-        today = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+        today = datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
         today_str = today.strftime("%Y-%m-%d")
         month_name = today.strftime("%B")
         year, month = today.year, today.month
@@ -186,7 +186,7 @@ async def handle_message(message: Message):
     except Exception:
         return
 
-    today = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+    today = datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
     today_str = today.strftime("%Y-%m-%d")
     month_name = today.strftime("%B")
     year, month = today.year, today.month
@@ -222,15 +222,17 @@ async def handle_message(message: Message):
 async def daily_summary():
     global last_amount
     await init_db()
+    local_tz = timezone(timedelta(hours=TIMEZONE_OFFSET))
+
     while True:
-        now = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
-        target = datetime.combine(now.date(), datetime.min.time()) + timedelta(hours=23)
+        now = datetime.now(local_tz)
+        target = datetime.combine(now.date(), datetime.min.time(), tzinfo=local_tz) + timedelta(hours=23)
         if now > target:
             target += timedelta(days=1)
         wait_seconds = (target - now).total_seconds()
         await asyncio.sleep(wait_seconds)
 
-        today = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+        today = datetime.now(local_tz)
         day = (today - timedelta(seconds=1)).strftime("%Y-%m-%d")
         next_day = today.strftime("%Y-%m-%d")
         month_name = today.strftime("%B")
