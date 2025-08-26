@@ -28,7 +28,8 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS budget (
                 day TEXT PRIMARY KEY,
                 expenses INTEGER DEFAULT 0,
-                savings INTEGER DEFAULT 0
+                savings INTEGER DEFAULT 0,
+                carried_over INTEGER DEFAULT 0
             )
         """)
         await db.commit()
@@ -36,14 +37,14 @@ async def init_db():
 # --- Отримати дані дня ---
 async def get_day_data(day: str):
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT expenses, savings FROM budget WHERE day=?", (day,)) as cursor:
+        async with db.execute("SELECT expenses, savings, carried_over FROM budget WHERE day=?", (day,)) as cursor:
             row = await cursor.fetchone()
             if row:
-                return row[0], row[1]
+                return row[0], row[1], row[2]
             else:
-                await db.execute("INSERT INTO budget (day, expenses, savings) VALUES (?, 0, 0)", (day,))
+                await db.execute("INSERT INTO budget (day, expenses, savings, carried_over) VALUES (?, 0, 0, 0)", (day,))
                 await db.commit()
-                return 0, 0
+                return 0, 0, 0
 
 # --- Порахувати всі витрати за місяць ---
 async def get_month_expenses(year: int, month: int):
@@ -54,10 +55,10 @@ async def get_month_expenses(year: int, month: int):
             return row[0] if row[0] else 0
 
 # --- Оновити дані дня ---
-async def update_day(day: str, expenses: int, savings: int):
+async def update_day(day: str, expenses: int, savings: int, carried_over: int = 0):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("REPLACE INTO budget (day, expenses, savings) VALUES (?, ?, ?)",
-                         (day, expenses, savings))
+        await db.execute("REPLACE INTO budget (day, expenses, savings, carried_over) VALUES (?, ?, ?, ?)",
+                         (day, expenses, savings, carried_over))
         await db.commit()
 
 # --- Хендлер повідомлень у групі ---
@@ -90,14 +91,15 @@ async def handle_message(message: Message):
         month_name = today.strftime("%B")
         year, month = today.year, today.month
 
-        expenses, savings = await get_day_data(today_str)
-        yesterday_expenses, _ = await get_day_data(yesterday)
+        expenses, savings, carried_over = await get_day_data(today_str)
+        yesterday_expenses, _, yesterday_carried_over = await get_day_data(yesterday)
 
-        transferred = 0
-        if yesterday_expenses > DAILY_BUDGET:
-            transferred = yesterday_expenses - DAILY_BUDGET
+        # Розраховуємо доступний бюджет на сьогодні
+        available_budget = DAILY_BUDGET
+        if carried_over > 0:
+            available_budget -= carried_over
 
-        balance = DAILY_BUDGET - expenses
+        balance = available_budget - expenses
         if balance < 0:
             balance = 0
 
@@ -110,8 +112,12 @@ async def handle_message(message: Message):
             f"💰 Загальні заощадження на {month_name}: {savings} грн\n"
             f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
         )
-        if transferred > 0:
-            text += f"\n\n⚠️ Борг з учора: {transferred} грн"
+        
+        if carried_over > 0:
+            text += f"\n⚠️ Перенесено з минулого дня: {carried_over} грн"
+        if yesterday_expenses > DAILY_BUDGET:
+            overspend = yesterday_expenses - DAILY_BUDGET
+            text += f"\n⚠️ Вчорашнє перевищення: {overspend} грн (перенесено на сьогодні)"
 
         await message.reply(text, parse_mode="HTML")
         return
@@ -124,18 +130,26 @@ async def handle_message(message: Message):
         month_name = today.strftime("%B")
         year, month = today.year, today.month
 
-        _, yesterday_savings = await get_day_data(yesterday)
-        await update_day(today_str, 0, yesterday_savings)
+        _, yesterday_savings, yesterday_carried_over = await get_day_data(yesterday)
+        await update_day(today_str, 0, yesterday_savings, yesterday_carried_over)
 
         month_expenses = await get_month_expenses(year, month)
+
+        # Розраховуємо доступний бюджет після скидання
+        available_budget = DAILY_BUDGET
+        if yesterday_carried_over > 0:
+            available_budget -= yesterday_carried_over
 
         text = (
             f"🧹 Всі витрати за сьогодні скасовано\n\n"
             f"🔴 Витрачено сьогодні: 0 грн\n"
-            f"📉 Залишок на сьогодні: {DAILY_BUDGET} грн\n"
+            f"📉 Залишок на сьогодні: {available_budget} грн\n"
             f"💰 Загальні заощадження на {month_name}: {yesterday_savings} грн\n"
             f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
         )
+        if yesterday_carried_over > 0:
+            text += f"\n⚠️ Перенесено з минулого дня: {yesterday_carried_over} грн"
+
         await message.reply(text)
         return
 
@@ -150,16 +164,21 @@ async def handle_message(message: Message):
         month_name = today.strftime("%B")
         year, month = today.year, today.month
 
-        expenses, savings = await get_day_data(today_str)
+        expenses, savings, carried_over = await get_day_data(today_str)
         expenses -= last_amount
         if expenses < 0:
             expenses = 0
 
-        balance = DAILY_BUDGET - expenses
+        # Розраховуємо доступний бюджет
+        available_budget = DAILY_BUDGET
+        if carried_over > 0:
+            available_budget -= carried_over
+
+        balance = available_budget - expenses
         if balance < 0:
             balance = 0
 
-        await update_day(today_str, expenses, savings)
+        await update_day(today_str, expenses, savings, carried_over)
         month_expenses = await get_month_expenses(year, month)
 
         text = (
@@ -169,6 +188,9 @@ async def handle_message(message: Message):
             f"💰 Загальні заощадження на {month_name}: {savings} грн\n"
             f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
         )
+        if carried_over > 0:
+            text += f"\n⚠️ Перенесено з минулого дня: {carried_over} грн"
+
         last_amount = 0
         last_comment = ""
         await message.reply(text)
@@ -191,13 +213,19 @@ async def handle_message(message: Message):
     month_name = today.strftime("%B")
     year, month = today.year, today.month
 
-    expenses, savings = await get_day_data(today_str)
+    expenses, savings, carried_over = await get_day_data(today_str)
     expenses += amount
-    await update_day(today_str, expenses, savings)
+    
+    # Розраховуємо доступний бюджет
+    available_budget = DAILY_BUDGET
+    if carried_over > 0:
+        available_budget -= carried_over
 
-    balance = DAILY_BUDGET - expenses
+    balance = available_budget - expenses
     if balance < 0:
         balance = 0
+
+    await update_day(today_str, expenses, savings, carried_over)
 
     last_amount = amount
     last_comment = comment
@@ -215,6 +243,9 @@ async def handle_message(message: Message):
         f"💰 Загальні заощадження на {month_name}: {savings} грн\n"
         f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
     )
+    
+    if carried_over > 0:
+        text += f"\n⚠️ Перенесено з минулого дня: {carried_over} грн"
 
     await message.reply(text, parse_mode="HTML")
 
@@ -239,26 +270,39 @@ async def daily_summary():
         month_name = today.strftime("%B")
         year, month = today.year, today.month
 
-        expenses, savings = await get_day_data(day)
+        expenses, savings, carried_over = await get_day_data(day)
 
-        if expenses <= DAILY_BUDGET:
-            balance = DAILY_BUDGET - expenses
+        # Розраховуємо перевищення бюджету
+        available_budget = DAILY_BUDGET
+        if carried_over > 0:
+            available_budget -= carried_over
+
+        if expenses <= available_budget:
+            # Якщо не перевищили бюджет - додаємо заощадження
+            balance = available_budget - expenses
             savings += balance
-            await update_day(next_day, 0, savings)
+            # Наступного дня переносимо 0
+            await update_day(next_day, 0, savings, 0)
         else:
-            overspend = expenses - DAILY_BUDGET
-            await update_day(next_day, overspend, savings)
+            # Якщо перевищили бюджет - переносимо перевищення на наступний день
+            overspend = expenses - available_budget
+            await update_day(next_day, 0, savings, overspend)
 
-        # Отримуємо всі витрати за місяць (правильний розрахунок)
+        # Отримуємо всі витрати за місяць
         month_expenses = await get_month_expenses(year, month)
 
         text = (
             f"📊 <b>Підсумок дня ({day})</b>\n"
             f"🔴 Витрачено: {expenses} грн\n"
-            f"📉 Залишок на сьогодні: {max(0, DAILY_BUDGET - expenses)} грн\n"
+            f"📉 Залишок на сьогодні: {max(0, available_budget - expenses)} грн\n"
             f"💰 Загальні заощадження на {month_name}: {savings} грн\n"
             f"🗓️ Всього витрачено за місяць: {month_expenses} грн"
         )
+        
+        if expenses > available_budget:
+            overspend = expenses - available_budget
+            text += f"\n⚠️ Перевищення бюджету: {overspend} грн (перенесено на завтра)"
+
         try:
             await bot.send_message(GROUP_ID, text, parse_mode="HTML")
         except Exception as e:
