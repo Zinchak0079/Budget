@@ -218,7 +218,7 @@ async def handle_message(message: Message):
 
     await message.reply(text, parse_mode="HTML")
 
-# --- Автозвіт о 23:00 ---
+# --- Автозвіт о 22:00 ---
 async def daily_summary():
     global last_amount
     await init_db()
@@ -226,7 +226,8 @@ async def daily_summary():
 
     while True:
         now = datetime.now(local_tz)
-        target = datetime.combine(now.date(), datetime.min.time(), tzinfo=local_tz) + timedelta(hours=23)
+        # Змінено час з 23:00 на 22:00
+        target = datetime.combine(now.date(), datetime.min.time(), tzinfo=local_tz) + timedelta(hours=22)
         if now > target:
             target += timedelta(days=1)
         wait_seconds = (target - now).total_seconds()
@@ -248,6 +249,7 @@ async def daily_summary():
             overspend = expenses - DAILY_BUDGET
             await update_day(next_day, overspend, savings)
 
+        # Отримуємо всі витрати за місяць (правильний розрахунок)
         month_expenses = await get_month_expenses(year, month)
 
         text = (
