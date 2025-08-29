@@ -88,11 +88,9 @@ async def handle_message(message: Message):
         today = datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
         today_str = today.strftime("%Y-%m-%d")
         yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
-        month_name = today.strftime("%B")
         year, month = today.year, today.month
 
         expenses, savings, carried_over = await get_day_data(today_str)
-        yesterday_expenses, _, _ = await get_day_data(yesterday)
 
         # Актуальний бюджет
         available_budget = DAILY_BUDGET - carried_over if carried_over > 0 else DAILY_BUDGET
@@ -102,7 +100,7 @@ async def handle_message(message: Message):
         text = (
             f"📊 <b>Звіт за {today_str}</b>\n\n"
             f"🔴 Витрачено сьогодні: {expenses} грн\n"
-            f"📉 Залишок на сьогодні: {balance} грн\n"
+            f"📉 Залишок на сьогодні: {balance} грн (з {available_budget})\n"
             f"💰 Заощадження: {savings} грн\n"
             f"🗓️ Всього за місяць: {month_expenses} грн"
         )
@@ -117,7 +115,6 @@ async def handle_message(message: Message):
         today = datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
         yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
         today_str = today.strftime("%Y-%m-%d")
-        month_name = today.strftime("%B")
         year, month = today.year, today.month
 
         _, yesterday_savings, yesterday_carried_over = await get_day_data(yesterday)
@@ -147,7 +144,6 @@ async def handle_message(message: Message):
 
         today = datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
         today_str = today.strftime("%Y-%m-%d")
-        month_name = today.strftime("%B")
         year, month = today.year, today.month
 
         expenses, savings, carried_over = await get_day_data(today_str)
@@ -162,7 +158,7 @@ async def handle_message(message: Message):
         text = (
             f"❌ Скасовано витрату: {last_amount} грн\n\n"
             f"🔴 Витрачено: {expenses} грн\n"
-            f"📉 Залишок: {balance} грн\n"
+            f"📉 Залишок: {balance} грн (з {available_budget})\n"
             f"💰 Заощадження: {savings} грн\n"
             f"🗓️ Всього за місяць: {month_expenses} грн"
         )
@@ -187,7 +183,6 @@ async def handle_message(message: Message):
 
     today = datetime.now(timezone.utc) + timedelta(hours=TIMEZONE_OFFSET)
     today_str = today.strftime("%Y-%m-%d")
-    month_name = today.strftime("%B")
     year, month = today.year, today.month
 
     expenses, savings, carried_over = await get_day_data(today_str)
@@ -207,7 +202,7 @@ async def handle_message(message: Message):
         text += f"  <i>({comment})</i>"
     text += (
         f"\n\n🔴 Витрачено: {expenses} грн\n"
-        f"📉 Залишок: {balance} грн\n"
+        f"📉 Залишок: {balance} грн (з {available_budget})\n"
         f"💰 Заощадження: {savings} грн\n"
         f"🗓️ Всього за місяць: {month_expenses} грн"
     )
@@ -233,7 +228,6 @@ async def daily_summary():
         today = datetime.now(local_tz)
         day = (today - timedelta(seconds=1)).strftime("%Y-%m-%d")
         next_day = today.strftime("%Y-%m-%d")
-        month_name = today.strftime("%B")
         year, month = today.year, today.month
 
         expenses, savings, carried_over = await get_day_data(day)
@@ -241,8 +235,8 @@ async def daily_summary():
 
         if expenses <= available_budget:
             balance = available_budget - expenses
-            savings += balance
-            await update_day(next_day, 0, savings, 0)
+            new_savings = savings + balance  # ✅ додаємо баланс до попередніх заощаджень
+            await update_day(next_day, 0, new_savings, 0)
         else:
             overspend = expenses - available_budget
             await update_day(next_day, 0, savings, overspend)
@@ -252,8 +246,8 @@ async def daily_summary():
         text = (
             f"📊 <b>Підсумок дня ({day})</b>\n"
             f"🔴 Витрачено: {expenses} грн\n"
-            f"📉 Залишок: {max(0, available_budget - expenses)} грн\n"
-            f"💰 Заощадження: {savings} грн\n"
+            f"📉 Залишок: {max(0, available_budget - expenses)} грн (з {available_budget})\n"
+            f"💰 Заощадження: {new_savings if expenses <= available_budget else savings} грн\n"
             f"🗓️ Всього за місяць: {month_expenses} грн"
         )
         if expenses > available_budget:
